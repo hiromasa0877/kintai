@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>勤怠管理</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Firebase SDK (compat mode) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Meiryo', 'Yu Gothic', sans-serif; background: #f0f4f8; min-height: 100vh; }
@@ -109,6 +112,11 @@ body { font-family: 'Meiryo', 'Yu Gothic', sans-serif; background: #f0f4f8; min-
 }
 .mgr-nav button:hover { background: rgba(255,255,255,0.25); }
 .mgr-nav button.active { background: white; color: #1e3a5f; }
+.sync-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(255,255,255,0.15); color: white; white-space: nowrap;
+  transition: color 0.3s;
+}
 .mgr-body { display: flex; flex: 1; }
 .mgr-sidebar {
   width: 200px; background: white; border-right: 1px solid #e5e7eb;
@@ -218,7 +226,7 @@ input.note-inp { width: 180px; font-size: 12px; }
 .add-form-field label { font-size: 12px; color: #6b7280; display: block; margin-bottom: 4px; }
 
 /* PIN modal */
-.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z index: 100; }
 .modal { background: white; border-radius: 16px; padding: 32px 36px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.2); min-width: 280px; }
 .modal h2 { font-size: 18px; font-weight: bold; margin-bottom: 8px; }
 .modal p  { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
@@ -349,7 +357,7 @@ input.note-inp { width: 180px; font-size: 12px; }
     <p>管理者PINを入力してください<br><span class="pin-note">（デフォルト: 1234）</span></p>
     <input class="pin-input" type="password" id="pin-input" maxlength="4" placeholder="●●●●"
       onkeyup="if(event.key==='Enter')checkPin()">
-    <div class="pin-error" id="pin-error">PINが正しくありませこ</div>
+    <div class="pin-error" id="pin-error">PINが正しくありません</div>
     <div class="modal-btns">
       <button class="btn btn-primary" onclick="checkPin()">ログイン</button>
       <button class="btn" style="background:#f3f4f6;color:#374151" onclick="closePinModal()">キャンセル</button>
@@ -405,7 +413,10 @@ input.note-inp { width: 180px; font-size: 12px; }
 <!-- MANAGER SCREEN -->
 <div class="mgr-screen" id="screen-mgr">
   <div class="mgr-header">
-    <h1>📊 勤怠管理（管理者）</h1>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <h1>📊 勤怠管理（管理者）</h1>
+      <span class="sync-badge" id="sync-badge-mgr"></span>
+    </div>
     <div class="mgr-nav">
       <button class="active" id="mgr-btn-data" onclick="mgrTab('data')">勤怠データ</button>
       <button id="mgr-btn-emp" onclick="mgrTab('emp')">社員管理</button>
@@ -426,6 +437,37 @@ input.note-inp { width: 180px; font-size: 12px; }
 
 <script>
 // =============================================
+// FIREBASE CONFIG
+// ※ Firebaseコンソール（https://console.firebase.google.com/）で
+//   プロジェクト設定 > マイアプリ から取得した設定をここに貼り付けてください
+// =============================================
+const FIREBASE_CONFIG = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+
+let db = null;
+let firebaseEnabled = false;
+(function initFirebase() {
+  try {
+    if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY") {
+      firebase.initializeApp(FIREBASE_CONFIG);
+      db = firebase.firestore();
+      firebaseEnabled = true;
+      console.log('✅ Firebase接続完了');
+    } else {
+      console.info('ℹ️ Firebase未設定（ローカル保存モード）');
+    }
+  } catch(e) {
+    console.warn('Firebase初期化失敗:', e);
+  }
+})();
+
+// =============================================
 // CONFIG
 // =============================================
 let MANAGER_PIN    = localStorage.getItem('kintai_pin') || "1234";
@@ -433,7 +475,7 @@ let MANAGER_PIN    = localStorage.getItem('kintai_pin') || "1234";
 // =============================================
 // DATA
 // =============================================
-// デフォルト社員リスニ（スプレャドシート読み込み失敗時のフォールバック）
+// デフォルト社員リスト（スプレッドシート読み込み失敗時のフォールバック）
 let employees = [
   { id:1,  name:"島野典子",     hourlyRate:1200, employmentType:"パート" },
   { id:2,  name:"小野田佐知子", hourlyRate:1200, employmentType:"パート" },
@@ -466,24 +508,63 @@ let mgrMonth      = new Date().getMonth() + 1;
 let mgrCurrentTab = "data";
 let editingEmpId  = null;
 // =============================================
-// LOCAL STORAGE
+// LOCAL STORAGE + FIREBASE SYNC
 // =============================================
-// localStorageが使えない環境（iOS Safariのfile://など）でも���ちないようラップ
+// localStorageラップ（iOS Safariのfile://などでも落ちないよう）
 function _lsGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
 function _lsSet(key, val){ try{ localStorage.setItem(key, val); }catch(e){ /* 保存不可環境では無視 */ } }
 
+// --- 同期バッジ ---
+function updateSyncBadge(status) {
+  const badge = document.getElementById('sync-badge-mgr');
+  if (!badge) return;
+  if (status === 'synced')  { badge.textContent = '☁ 同期済み';   badge.style.color = '#86efac'; }
+  else if (status === 'syncing') { badge.textContent = '☁ 同期中…';  badge.style.color = '#fde68a'; }
+  else if (status === 'error')   { badge.textContent = '☁ 同期エラー'; badge.style.color = '#fca5a5'; }
+  else if (status === 'offline') { badge.textContent = '💾 ローカル'; badge.style.color = '#d1d5db'; }
+  else { badge.textContent = ''; }
+}
+
+// --- Firestoreへ保存 ---
+async function _cloudSaveEntries() {
+  if (!firebaseEnabled || !db) return;
+  try {
+    updateSyncBadge('syncing');
+    await db.collection('kintai').doc('entries').set({
+      data: JSON.stringify(entries),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    updateSyncBadge('synced');
+  } catch(e) { console.warn('Firestore entries保存失敗:', e); updateSyncBadge('error'); }
+}
+async function _cloudSaveEmployees() {
+  if (!firebaseEnabled || !db) return;
+  try {
+    await db.collection('kintai').doc('employees').set({
+      data: JSON.stringify(employees),
+      nextId: nextId,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch(e) { console.warn('Firestore employees保存失敗:', e); }
+}
+
+// --- T��存（ローカル＋クラウド） ---
 function saveEntries(){
   _lsSet('kintai_entries', JSON.stringify(entries));
+  _cloudSaveEntries();
 }
+function saveEmployees(){
+  _lsSet('kintai_employees', JSON.stringify(employees));
+  _lsSet('kintai_next_id',   String(nextId));
+  _cloudSaveEmployees();
+}
+
+// --- ローカルから読み込み ---
 function loadEntries(){
   try {
     const saved = _lsGet('kintai_entries');
     if(saved){ const parsed = JSON.parse(saved); if(parsed && typeof parsed === 'object') entries = parsed; }
   } catch(e){ console.warn('entries読込失敗:', e); }
-}
-function saveEmployees(){
-  _lsSet('kintai_employees', JSON.stringify(employees));
-  _lsSet('kintai_next_id',   String(nextId));
 }
 function loadEmployees(){
   try {
@@ -497,6 +578,52 @@ function loadEmployees(){
       }
     }
   } catch(e){ console.warn('employees読込失敗:', e); }
+}
+
+// --- Firestoreリアルタイム同期開始 ---
+function startFirebaseSync() {
+  if (!firebaseEnabled || !db) { updateSyncBadge('offline'); return; }
+
+  updateSyncBadge('syncing');
+
+  // entries の監視（サーバー変更のみ処理）
+  db.collection('kintai').doc('entries').onSnapshot({ includeMetadataChanges: true }, doc => {
+    if (doc.metadata.hasPendingWrites) return; // 自分のローカル書き込みは無視
+    if (doc.exists) {
+      try {
+        const cloudData = JSON.parse(doc.data().data);
+        // クラウドデータをローカルにマージ（クラウド優先）
+        entries = Object.assign({}, entries, cloudData);
+        _lsSet('kintai_entries', JSON.stringify(entries));
+        // 表示中なら再レンダリング
+        if (document.getElementById('screen-mgr').style.display !== 'none' && mgrCurrentTab === 'data') {
+          renderMgrData();
+        }
+        updateSyncBadge('synced');
+      } catch(e) { console.warn('Firestore entries解析失敗:', e); }
+    }
+  }, err => { console.warn('Firestore entries監視失敗:', err); updateSyncBadge('error'); });
+
+  // employees の監視
+  db.collection('kintai').doc('employees').onSnapshot({ includeMetadataChanges: true }, doc => {
+    if (doc.metadata.hasPendingWrites) return;
+    if (doc.exists) {
+      try {
+        const cloudEmps = JSON.parse(doc.data().data);
+        const cloudNextId = doc.data().nextId || nextId;
+        if (cloudEmps && cloudEmps.length > 0) {
+          employees = cloudEmps;
+          nextId = cloudNextId;
+          _lsSet('kintai_employees', JSON.stringify(employees));
+          _lsSet('kintai_next_id', String(nextId));
+          if (document.getElementById('screen-mgr').style.display !== 'none') {
+            renderMgrSidebar();
+            if (mgrCurrentTab === 'emp') renderMgrEmp();
+          }
+        }
+      } catch(e) { console.warn('Firestore employees解析失敗:', e); }
+    }
+  }, err => { console.warn('Firestore employees監視失敗:', err); });
 }
 
 // =============================================
@@ -925,7 +1052,7 @@ function showPunchSuccess(name, type, time){
   let count = 4;
   function update(){
     msgEl.innerHTML =
-      `<span style="font-size:16px;font-weight:bold;color:#1f2937">${icon} ${name}さん、${type~しました（${time}）</span><br>` +
+      `<span style="font-size:16px;font-weight:bold;color:#1f2937">${icon} ${name}さん、${type}しました（${time}）</span><br>` +
       `<span style="font-size:13px;color:#9ca3af">${count}秒後にトップ画面に戻ります...</span>`;
   }
   update();
@@ -1089,7 +1216,7 @@ function deleteEmp(id){
 // =============================================
 function clearPeriodData(){
   const pl = periodLabel(mgrYear, mgrMonth);
-  if(!confirm(`【注意】${pl} の全社員の勤怠データを削除します。\nExcel出力後に行ってください。\n\nよろしいですか？`)) return;
+  if(!confirm(`【注意】${pl} の全社員の勤怠データを削除します。lnExcel出力後に行ってください。\n\nよろしいですか？`)) return;
   const days = getDays(mgrYear, mgrMonth);
   employees.forEach(emp=>{
     days.forEach(d=>{
@@ -1147,7 +1274,7 @@ function exportExcel(){
         XLSX.utils.book_append_sheet(wb, ws, emp.name.slice(0,31));
         summary.push({name:emp.name, type:'社員', rate:0, hours:Math.round(tot*100)/100, salary:null, otHours:Math.round(totOT*100)/100});
       } else {
-        // パートシート: 休憧（全日自動1h）・給与あり
+        // パートシート: 休憩（全日自動1h）・給与かり
         const wsData = [
           ['勤怠集計表'],
           ['集計期間', pl, '', '氏名', emp.name, '', '時給', `¥${emp.hourlyRate.toLocaleString()}`],
@@ -1206,11 +1333,14 @@ function exportExcel(){
 }
 
 // =============================================
-// INIT: localStorageから復元
+// INIT: localStorageから復元 → Firebase同期開始
 // =============================================
 loadEmployees();
 loadEntries();
 if(employees.length) mgrEmpId = employees[0].id;
+
+// Firebase リアルタイム同期開始（設定済みの場合）
+startFirebaseSync();
 </script>
 </body>
 </html>
