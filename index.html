@@ -228,6 +228,98 @@ input.note-inp { width: 180px; font-size: 12px; }
 .pin-note { font-size: 11px; color: #9ca3af; }
 .modal-btns { display: flex; gap: 10px; margin-top: 18px; }
 .modal-btns button { flex: 1; }
+
+/* ===== RESPONSIVE ===== */
+
+/* タブレット (641px〜1024px) */
+@media (max-width: 1024px) {
+  .mgr-sidebar { width: 160px; }
+  .mgr-main { padding: 16px; }
+  .emp-mgmt-wrap { max-width: 100%; }
+  input[type=time] { width: 95px; }
+  input.note-inp { width: 130px; }
+}
+
+/* スマホ (〜640px) */
+@media (max-width: 640px) {
+  /* ヘッダー */
+  .mgr-header {
+    flex-direction: column; align-items: flex-start; gap: 10px;
+    padding: 12px 16px;
+  }
+  .mgr-header h1 { font-size: 15px; }
+  .mgr-nav { width: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+  .mgr-nav button { flex: 1; padding: 6px 8px; font-size: 12px; min-width: 70px; }
+
+  /* サイドバー → 上部の横スクロールリストに変換 */
+  .mgr-body { flex-direction: column; }
+  .mgr-sidebar {
+    width: 100%; border-right: none; border-bottom: 1px solid #e5e7eb;
+    padding: 10px 0; display: flex; flex-direction: column;
+    max-height: none; overflow-x: auto; overflow-y: hidden;
+  }
+  .mgr-sidebar h2 { padding: 0 12px 8px; font-size: 10px; }
+  /* 社員ボタンを横並びにする */
+  #mgr-sidebar-list {
+    display: flex; flex-direction: row; flex-wrap: nowrap;
+    overflow-x: auto; padding: 0 10px; gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .emp-sb-btn {
+    flex-shrink: 0; width: auto; padding: 8px 12px;
+    border-radius: 8px; border: 1px solid #e5e7eb;
+    white-space: nowrap; font-size: 12px;
+  }
+  .emp-sb-btn.active { background: #eff6ff; border-color: #3b82f6; }
+  .emp-sb-btn .sbr, .emp-sb-btn .sbt { display: none; }
+
+  /* メインエリア */
+  .mgr-main { padding: 12px; }
+
+  /* コントロールバー */
+  .ctrl-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .ctrl-left { width: 100%; }
+  .ctrl-bar > button { width: 100%; }
+  .period-label { font-size: 12px; }
+
+  /* バナー */
+  .emp-banner { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .banner-totals { text-align: left; }
+  .banner-name { font-size: 17px; }
+  .banner-salary, .banner-ot { font-size: 14px; }
+
+  /* テーブル：横スクロール */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 8px; }
+  table { font-size: 12px; min-width: 560px; }
+  th, td { padding: 6px 7px; }
+  input[type=time] { width: 88px; font-size: 12px; padding: 4px 5px; }
+  input.break-inp { width: 56px; font-size: 12px; }
+  input.note-inp { width: 100px; font-size: 11px; }
+
+  /* フッターノート */
+  .footer-note { flex-direction: column; gap: 4px; font-size: 10px; }
+
+  /* 社員管理カード */
+  .emp-mgmt-wrap { max-width: 100%; }
+  .add-form { flex-direction: column; gap: 8px; }
+  .add-form-field { width: 100%; }
+  .add-form-field input, .add-form-field select { width: 100%; }
+  .add-form > button { width: 100%; }
+
+  /* モーダル */
+  .modal { padding: 24px 20px; margin: 0 16px; min-width: 0; width: 100%; }
+  .modal h2 { font-size: 16px; }
+  .pin-input { font-size: 22px; letter-spacing: 6px; }
+
+  /* 打刻ボタン */
+  .clock-btn { padding: 22px; font-size: 21px; }
+
+  /* 社員管理テーブル */
+  .card { overflow-x: auto; }
+  .card table { min-width: 400px; }
+  .card .add-form-field input[type="number"] { width: 100%; }
+  select { max-width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -257,7 +349,7 @@ input.note-inp { width: 180px; font-size: 12px; }
     <p>管理者PINを入力してください<br><span class="pin-note">（デフォルト: 1234）</span></p>
     <input class="pin-input" type="password" id="pin-input" maxlength="4" placeholder="●●●●"
       onkeyup="if(event.key==='Enter')checkPin()">
-    <div class="pin-error" id="pin-error">PINが正しくありません</div>
+    <div class="pin-error" id="pin-error">PINが正しくありませこ</div>
     <div class="modal-btns">
       <button class="btn btn-primary" onclick="checkPin()">ログイン</button>
       <button class="btn" style="background:#f3f4f6;color:#374151" onclick="closePinModal()">キャンセル</button>
@@ -341,7 +433,7 @@ let MANAGER_PIN    = localStorage.getItem('kintai_pin') || "1234";
 // =============================================
 // DATA
 // =============================================
-// デフォルト社員リスト（スプレッドシート読み込み失敗時のフォールバック）
+// デフォルト社員リスニ（スプレャドシート読み込み失敗時のフォールバック）
 let employees = [
   { id:1,  name:"島野典子",     hourlyRate:1200, employmentType:"パート" },
   { id:2,  name:"小野田佐知子", hourlyRate:1200, employmentType:"パート" },
@@ -376,7 +468,7 @@ let editingEmpId  = null;
 // =============================================
 // LOCAL STORAGE
 // =============================================
-// localStorageが使えない環境（iOS Safariのfile://など）でも落ちないようラップ
+// localStorageが使えない環境（iOS Safariのfile://など）でも���ちないようラップ
 function _lsGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
 function _lsSet(key, val){ try{ localStorage.setItem(key, val); }catch(e){ /* 保存不可環境では無視 */ } }
 
@@ -833,11 +925,11 @@ function showPunchSuccess(name, type, time){
   let count = 4;
   function update(){
     msgEl.innerHTML =
-      `<span style="font-size:16px;font-weight:bold;color:#1f2937">${icon} ${name}さん、${type}しました（${time}）</span><br>` +
+      `<span style="font-size:16px;font-weight:bold;color:#1f2937">${icon} ${name}さん、${type~しました（${time}）</span><br>` +
       `<span style="font-size:13px;color:#9ca3af">${count}秒後にトップ画面に戻ります...</span>`;
   }
   update();
-  // ボタンを無効化してカギントダギン
+  // ボタンを無効化してカウントダウン
   document.getElementById('btn-clock-in').disabled  = true;
   document.getElementById('btn-clock-out').disabled = true;
   const timer = setInterval(()=>{
@@ -1055,7 +1147,7 @@ function exportExcel(){
         XLSX.utils.book_append_sheet(wb, ws, emp.name.slice(0,31));
         summary.push({name:emp.name, type:'社員', rate:0, hours:Math.round(tot*100)/100, salary:null, otHours:Math.round(totOT*100)/100});
       } else {
-        // パートシート: 休憩（全日自動1h）・給与あり
+        // パートシート: 休憧（全日自動1h）・給与あり
         const wsData = [
           ['勤怠集計表'],
           ['集計期間', pl, '', '氏名', emp.name, '', '時給', `¥${emp.hourlyRate.toLocaleString()}`],
