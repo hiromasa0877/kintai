@@ -134,8 +134,6 @@ body { font-family: 'Meiryo', 'Yu Gothic', sans-serif; background: #f0f4f8; min-
 select, input { border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 12px; font-size: 13px; background: white; outline: none; }
 select:focus, input:focus { border-color: #1e3a5f; }
 .period-label { font-size: 13px; color: #6b7280; background: #f3f4f6; padding: 7px 14px; border-radius: 6px; font-weight: 500; }
-.sheet-status-ok  { font-size: 11px; color: #16a34a; }
-.sheet-status-err { font-size: 11px; color: #dc2626; }
 
 /* Buttons */
 .btn { border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; padding: 8px 18px; transition: opacity 0.2s; }
@@ -338,8 +336,6 @@ input.note-inp { width: 180px; font-size: 12px; }
 // =============================================
 // CONFIG
 // =============================================
-const SPREADSHEET_ID = '1UlbTJeFNAd6383_WX64ccBQbc_avKDJc';
-const SHEET_GID      = '1599532985'; // パート時給シートのGID
 let MANAGER_PIN    = localStorage.getItem('kintai_pin') || "1234";
 
 // =============================================
@@ -377,7 +373,39 @@ let mgrYear       = new Date().getFullYear();
 let mgrMonth      = new Date().getMonth() + 1;
 let mgrCurrentTab = "data";
 let editingEmpId  = null;
-let sheetStatus   = 'pending'; // 'pending' | 'ok' | 'error'
+// =============================================
+// LOCAL STORAGE
+// =============================================
+// localStorageが使えない環境（iOS Safariのfile://など）でも落ちないようラップ
+function _lsGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
+function _lsSet(key, val){ try{ localStorage.setItem(key, val); }catch(e){ /* 保存不可環境では無視 */ } }
+
+function saveEntries(){
+  _lsSet('kintai_entries', JSON.stringify(entries));
+}
+function loadEntries(){
+  try {
+    const saved = _lsGet('kintai_entries');
+    if(saved){ const parsed = JSON.parse(saved); if(parsed && typeof parsed === 'object') entries = parsed; }
+  } catch(e){ console.warn('entries読込失敗:', e); }
+}
+function saveEmployees(){
+  _lsSet('kintai_employees', JSON.stringify(employees));
+  _lsSet('kintai_next_id',   String(nextId));
+}
+function loadEmployees(){
+  try {
+    const saved   = _lsGet('kintai_employees');
+    const savedId = _lsGet('kintai_next_id');
+    if(saved){
+      const parsed = JSON.parse(saved);
+      if(parsed && parsed.length > 0){
+        employees = parsed;
+        nextId = savedId ? parseInt(savedId) : employees.reduce((m,e)=>Math.max(m,e.id),0) + 1;
+      }
+    }
+  } catch(e){ console.warn('employees読込失敗:', e); }
+}
 
 // =============================================
 // UTILITIES
@@ -400,6 +428,7 @@ function setEntry(empId, dateStr, field, value){
   const k = entryKey(empId, dateStr);
   if(!entries[k]) entries[k] = {start:"",end:"",breakHours:"",note:""};
   entries[k][field] = value;
+  saveEntries();
 }
 
 // 全日勤務判定: 出勤≤12:00 かつ 退勤≥16:00
@@ -410,7 +439,7 @@ function isFullDay(start, end){
   return (sh*60+sm) <= 12*60 && (eh*60+em) >= 16*60;
 }
 
-// 残業時間: 退勤丸め後が18:00を記入した時間（時間単位）
+// 残業時間: 退勤丸め後が18:00を超えた時間（時間単位）
 function calcOvertimeH(re){
   if(!re) return 0;
   const [h,m] = re.split(':').map(Number);
@@ -473,59 +502,6 @@ function calcPeriod(empId){
     return {d, ds, start:e.start, end:e.end, breakHours:brk, rs, re, wh, ot, autoB, note:e.note||''};
   });
   return {rows, total, totalOT};
-}
-
-// =============================================
-// GOOGLE SHEETS CSV FETCH (修正③)
-// =============================================
-function parseCSVLine(line){
-  const result = [];
-  let field = '', inQ = false;
-  for(let i=0; i<line.length; i++){
-    const c = line[i];
-    if(c==='"'){ inQ=!inQ; }
-    else if(c===','&&!inQ){ result.push(field); field=''; }
-    else { field+=c; }
-  }
-  result.push(field);
-  return result.map(s=>s.trim());
-}
-
-async function fetchEmployeesFromSheet(){
-  const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
-  try{
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const text = await res.text();
-    const lines = text.split('\n').filter(l=>l.trim());
-    if(lines.length < 2) throw new Error('データなし');
-    const parsed = [];
-    let id = 1;
-    for(let i=1; i<lines.length; i++){
-      const cols = parseCSVLine(lines[i]);
-      const name    = cols[0] || '';
-      const empType = cols[1] || 'パート';
-      const rateStr = (cols[2]||'').replace(/[¥, ]/g,'');
-      if(!name) continue;
-      const rate = /^\d+$/.test(rateStr) ? parseInt(rateStr) : 0;
-      parsed.push({ id:id++, name, hourlyRate:rate, employmentType:empType });
-    }
-    if(parsed.length === 0) throw new Error('有効な社員データなし');
-    employees   = parsed;
-    nextId      = id;
-    sheetStatus = 'ok';
-    console.log('✅ スプレッドシートから社員リストを読み込みました（' + parsed.length + '名）');
-  } catch(e){
-    sheetStatus = 'error';
-    console.warn('⚠️ スプレッドシート読み込み失敗（デフォルトリスト使用）:', e.message);
-  }
-}
-
-async function reloadSheet(){
-  sheetStatus = 'pending';
-  await fetchEmployeesFromSheet();
-  if(mgrCurrentTab==='data') { renderMgrSidebar(); renderMgrData(); }
-  else { renderMgrSidebar(); renderMgrEmp(); }
 }
 
 // =============================================
@@ -681,12 +657,7 @@ function renderMgrData(){
          <td></td>
        </tr>`;
 
-  // スプレッドシート読み込み状態
-  const statusHtml = sheetStatus === 'ok'
-    ? '<span class="sheet-status-ok">✅ シートから自動取得済み</span>'
-    : sheetStatus === 'error'
-    ? '<span class="sheet-status-err">⚠️ シート読込失敗（デフォルト使用）</span> <button class="btn btn-sm btn-edit" style="margin-left:6px" onclick="reloadSheet()">再読み込み</button>'
-    : '';
+  const statusHtml = '';
 
   const bannerClass  = isShain ? 'emp-banner shain' : 'emp-banner';
   const bannerTagHtml = isShain
@@ -710,6 +681,7 @@ function renderMgrData(){
         ${statusHtml}
       </div>
       <button class="btn btn-success" onclick="exportExcel()">📥 Excel出力（全社員）</button>
+      <button class="btn" style="background:#dc2626;color:white;margin-left:8px" onclick="clearPeriodData()">🗑️ 当期データ削除</button>
     </div>
     <div class="${bannerClass}">
       <div>
@@ -799,7 +771,7 @@ function updateEmpStatus(){
   const e     = getEntry(empId, today);
   const now   = new Date();
   document.getElementById('today-date').textContent =
-    `${now.getFullYear()}鹴${now.getMonth()+1}月${now.getDate()}日（${DOW[now.getDay()]}）`;
+    `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日（${DOW[now.getDay()]}）`;
 
   const inEl  = document.getElementById('disp-in');
   const outEl = document.getElementById('disp-out');
@@ -841,17 +813,40 @@ function saveEmpNote(){
 }
 function clockIn(){
   const empId = +document.getElementById('emp-select').value;
+  const emp   = employees.find(e=>e.id===empId);
   const now   = nowStr();
   setEntry(empId, todayIso(), 'start', now);
-  document.getElementById('clock-msg').textContent = `✅ 出勤しました（${now}）`;
   updateEmpStatus();
+  showPunchSuccess(emp ? emp.name : '', '出勤', now);
 }
 function clockOut(){
   const empId = +document.getElementById('emp-select').value;
+  const emp   = employees.find(e=>e.id===empId);
   const now   = nowStr();
   setEntry(empId, todayIso(), 'end', now);
-  document.getElementById('clock-msg').textContent = `✅ 退勤しました（${now}）`;
   updateEmpStatus();
+  showPunchSuccess(emp ? emp.name : '', '退勤', now);
+}
+function showPunchSuccess(name, type, time){
+  const msgEl   = document.getElementById('clock-msg');
+  const icon    = type === '出勤' ? '✅' : '🔴';
+  let count = 4;
+  function update(){
+    msgEl.innerHTML =
+      `<span style="font-size:16px;font-weight:bold;color:#1f2937">${icon} ${name}さん、${type}しました（${time}）</span><br>` +
+      `<span style="font-size:13px;color:#9ca3af">${count}秒後にトップ画面に戻ります...</span>`;
+  }
+  update();
+  // ボタンを無効化してカギントダギン
+  document.getElementById('btn-clock-in').disabled  = true;
+  document.getElementById('btn-clock-out').disabled = true;
+  const timer = setInterval(()=>{
+    count--;
+    if(count <= 0){
+      clearInterval(timer);
+      goTop();
+    } else { update(); }
+  }, 1000);
 }
 
 // =============================================
@@ -885,9 +880,7 @@ function renderMgrEmp(){
       </tr>`;
   }).join('');
 
-  const sheetNote = sheetStatus === 'ok'
-    ? '<p style="font-size:12px;color:#6b7280;margin-bottom:12px;background:#f0fdf4;padding:8px 12px;border-radius:6px">✅ 社員一覧はスプレッドシートから自動取得されています。変更はスプレッドシート側で行ってください。</p>'
-    : '';
+  const sheetNote = '';
 
   document.getElementById('mgr-view-emp').innerHTML = `
     <div class="emp-mgmt-wrap">
@@ -913,7 +906,7 @@ function renderMgrEmp(){
         <div id="pin-change-msg" style="margin-top:10px; font-size:13px; min-height:18px;"></div>
       </div>
       <div class="card">
-        <h3>新規社員追加（セッション中のみ）</h3>
+        <h3>新規社員追加</h3>
         <div class="add-form">
           <div class="add-form-field"><label>氏名</label><input id="new-name" placeholder="例: 田中 太郎" style="width:160px"></div>
           <div class="add-form-field"><label>雇用形態</label>
@@ -951,8 +944,8 @@ function changePin(){
     return;
   }
   if(newPin.length < 4){
-    msgEl.style.color: = '#dc2626';
-    msgEl.textContent = '❌ 新しぉP�Iかを、文字以上にしてください';
+    msgEl.style.color = '#dc2626';
+    msgEl.textContent = '❌ 新しいPINは4文字以上にしてください';
     return;
   }
   if(newPin !== newPin2){
@@ -966,7 +959,7 @@ function changePin(){
   document.getElementById('pin-new').value     = '';
   document.getElementById('pin-new2').value    = '';
   msgEl.style.color = '#16a34a';
-  msgEl.textContent = '✅ PINを変更しました（リロード後も維持されまし）';
+  msgEl.textContent = '✅ PINを変更しました（リロード後も維持されます）';
   setTimeout(()=>{ msgEl.textContent = ''; }, 4000);
 }
 function addEmp(){
@@ -975,6 +968,7 @@ function addEmp(){
   const rate = parseInt(document.getElementById('new-rate').value)||1000;
   if(!name){ alert('氏名を入力してください'); return; }
   employees.push({id:nextId++, name, hourlyRate:rate, employmentType:type});
+  saveEmployees();
   document.getElementById('new-name').value = '';
   document.getElementById('new-rate').value = '';
   renderMgrSidebar(); renderMgrEmp();
@@ -987,13 +981,33 @@ function saveEmpEdit(id){
   const rate = parseInt(document.getElementById(`er-${id}`).value)||0;
   if(!name){ alert('氏名を入力してください'); return; }
   employees = employees.map(e => e.id===id ? {...e, name, hourlyRate:rate, employmentType:type} : e);
+  saveEmployees();
   editingEmpId=null; renderMgrSidebar(); renderMgrEmp();
 }
 function deleteEmp(id){
   if(!confirm('この社員を削除しますか？')) return;
   employees = employees.filter(e=>e.id!==id);
+  saveEmployees();
   if(mgrEmpId===id && employees.length) mgrEmpId=employees[0].id;
   renderMgrSidebar(); renderMgrEmp();
+}
+
+// =============================================
+// DATA CLEAR
+// =============================================
+function clearPeriodData(){
+  const pl = periodLabel(mgrYear, mgrMonth);
+  if(!confirm(`【注意】${pl} の全社員の勤怠データを削除します。\nExcel出力後に行ってください。\n\nよろしいですか？`)) return;
+  const days = getDays(mgrYear, mgrMonth);
+  employees.forEach(emp=>{
+    days.forEach(d=>{
+      const k = entryKey(emp.id, isoDate(d));
+      delete entries[k];
+    });
+  });
+  saveEntries();
+  if(mgrCurrentTab==='data') renderMgrData();
+  alert(`✅ ${pl} のデータを削除しました。`);
 }
 
 // =============================================
@@ -1080,7 +1094,7 @@ function exportExcel(){
       ['勤怠集計サマリー'],
       ['集計期間', pl],
       [],
-      ['氏名','雇璨形態','時給','合計稼働時間(h)','残業時間(h)','給与（税前）'],
+      ['氏名','雇用形態','時給','合計稼働時間(h)','残業時間(h)','給与（税前）'],
     ];
     let grandTotal = 0;
     summary.forEach(s=>{
@@ -1100,13 +1114,11 @@ function exportExcel(){
 }
 
 // =============================================
-// INIT: スプレッドシートから社員リストを自動取得
+// INIT: localStorageから復元
 // =============================================
-(async () => {
-  await fetchEmployeesFromSheet();
-  // デフォルトで最初の社員を選択
-  if(employees.length) mgrEmpId = employees[0].id;
-})();
+loadEmployees();
+loadEntries();
+if(employees.length) mgrEmpId = employees[0].id;
 </script>
 </body>
 </html>
